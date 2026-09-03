@@ -12,6 +12,14 @@ AGENT_PROFILES = {
     },
 }
 
+SUMMARY_HEADINGS = {
+    "fa": "نتیجه و موضع غالب\nتوافق‌ها\nاختلاف‌های حل‌نشده\nپیشنهادهای کلیدی\nریسک‌ها و بده‌بستان‌ها\nموارد حل‌شده\nپرسش‌های باز\nگام بعدی",
+    "en": "Dominant conclusion and position\nAgreements\nUnresolved disagreements\nKey proposals\nRisks and trade-offs\nResolved issues\nOpen questions\nNext step",
+    "de": "Vorherrschendes Ergebnis und Position\nÜbereinstimmungen\nUngelöste Meinungsverschiedenheiten\nWichtige Vorschläge\nRisiken und Zielkonflikte\nGelöste Punkte\nOffene Fragen\nNächster Schritt",
+    "fr": "Conclusion et position dominante\nAccords\nDésaccords non résolus\nPropositions clés\nRisques et compromis\nPoints résolus\nQuestions ouvertes\nProchaine étape",
+    "zh": "主要结论与立场\n共识\n未解决的分歧\n关键建议\n风险与权衡\n已解决的问题\n开放问题\n下一步",
+}
+
 
 def _language_rule(state: DebateState) -> str:
     return (
@@ -84,6 +92,7 @@ def moderator_round_update_prompt(state: DebateState, mission: str, agent1: str,
 
 
 def moderator_summary_prompt(state: DebateState) -> list[dict[str, str]]:
+    headings = SUMMARY_HEADINGS.get(state.language, SUMMARY_HEADINGS["en"])
     return [
         {"role": "system", "content": (
             "You are the final Moderator for a completed debate segment. Produce a decision-useful master summary. "
@@ -93,7 +102,6 @@ def moderator_summary_prompt(state: DebateState) -> list[dict[str, str]]:
         )},
         {"role": "user", "content": (
             f"Question:\n{state.question}\n\nDurable state accumulated during this segment:\n{compact_state(state)}\n\n"
-            "Write a compact master summary with these headings:\n"
-            "نتیجه و موضع غالب\nتوافق‌ها\nاختلاف‌های حل‌نشده\nپیشنهادهای کلیدی\nریسک‌ها و بده‌بستان‌ها\nموارد حل‌شده\nپرسش‌های باز\nگام بعدی"
+            f"Write a compact master summary using these headings in this exact order:\n{headings}"
         )},
     ]
