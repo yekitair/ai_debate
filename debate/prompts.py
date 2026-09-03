@@ -20,7 +20,8 @@ def agent_prompt(name: str, state: DebateState, mission: str, opponent_argument:
             f"You are {name}, role: {profile['role']}.\n"
             f"Your fixed debate position: {profile['position']}\n"
             "You are a participant, not the moderator. Address the current mission, directly engage the opponent's latest point, "
-            "avoid repeating old ideas, and add at least one useful advancement when possible. Be concise but finish completely."
+            "avoid repeating old ideas, and add at least one useful advancement when possible. "
+            "Use Persian. Be concise, concrete, and finish your response completely."
         )},
         {"role": "user", "content": (
             f"Question:\n{state.question}\n\nCurrent mission:\n{mission}\n\n"
@@ -50,9 +51,10 @@ def moderator_mission_prompt(state: DebateState) -> list[dict[str, str]]:
 def moderator_round_update_prompt(state: DebateState, mission: str, agent1: str, agent2: str) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": (
-            "You are the Moderator. Evaluate this round impartially. Identify what actually changed: agreements, disagreements, "
-            "new proposals, risks, resolved issues, open questions, and the best next direction. Do not merely restate arguments. "
-            "Use exactly these markers:\n[CONSENSUS]\n[DISAGREEMENTS]\n[NEW]\n[RISKS]\n[RESOLVED]\n[OPEN]\n[NEXT]"
+            "You are the Moderator. Evaluate this round impartially. Identify only what actually changed. "
+            "Use exactly these markers, one item per line under each marker:\n"
+            "[CONSENSUS]\n[DISAGREEMENTS]\n[NEW]\n[RISKS]\n[RESOLVED]\n[OPEN]\n[NEXT]\n"
+            "If a section has no new item, write '- none'. Do not invent facts."
         )},
         {"role": "user", "content": (
             f"Question:\n{state.question}\n\nMission:\n{mission}\n\nAgent 1:\n{agent1}\n\nAgent 2:\n{agent2}\n\n"
@@ -62,17 +64,15 @@ def moderator_round_update_prompt(state: DebateState, mission: str, agent1: str,
 
 
 def moderator_summary_prompt(state: DebateState) -> list[dict[str, str]]:
-    transcript = "\n\n".join(f"Round {a.round_number} — {a.agent}:\n{a.text}" for a in state.arguments)
     return [
         {"role": "system", "content": (
             "You are the final Moderator for a completed 10-round segment. Produce a decision-useful master summary in Persian. "
-            "Distinguish established consensus from unresolved disagreement. Preserve concrete proposals, risks, trade-offs, "
-            "resolved issues, and open questions needed for the next segment. Do not invent facts."
+            "Use the durable state created by the round evaluations. Distinguish consensus from unresolved disagreement. "
+            "Preserve concrete proposals, risks, trade-offs, resolved issues, and open questions. Do not invent facts."
         )},
         {"role": "user", "content": (
-            f"Question:\n{state.question}\n\nDurable state before this segment:\n{state.durable_summary or '(none)'}\n\n"
-            f"Current segment transcript:\n{transcript}\n\n"
-            "Write a compact master summary with: consensus, disagreements, strongest proposals, risks/trade-offs, resolved issues, "
-            "open questions, and recommended next investigations."
+            f"Question:\n{state.question}\n\nDurable state accumulated during this segment:\n{compact_state(state)}\n\n"
+            "Write a compact master summary with these headings:\n"
+            "نتیجه و موضع غالب\nتوافق‌ها\nاختلاف‌های حل‌نشده\nپیشنهادهای کلیدی\nریسک‌ها و بده‌بستان‌ها\nموارد حل‌شده\nپرسش‌های باز\nگام بعدی"
         )},
     ]
