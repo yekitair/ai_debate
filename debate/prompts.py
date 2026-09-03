@@ -32,18 +32,21 @@ def agent_prompt(name: str, state: DebateState, mission: str, opponent_argument:
     ]
 
 
-def moderator_mission_prompt(state: DebateState) -> list[dict[str, str]]:
+def moderator_mission_prompt(state: DebateState, user_note: str = "") -> list[dict[str, str]]:
     recent = state.arguments[-2:]
     recent_text = "\n\n".join(f"{a.agent}: {a.text}" for a in recent) or "(no previous round arguments)"
+    note_text = user_note.strip() or "(no user note)"
     return [
         {"role": "system", "content": (
             "You are the Moderator and protocol controller. You are not a contestant. "
             "Choose the single most valuable question or angle for this round based on durable state and the latest exchange. "
-            "Force progress rather than repetition. Return only a short mission in Persian."
+            "Force progress rather than repetition. A user note is a direct instruction/observation from the human operator; "
+            "consider it explicitly when deciding the mission. Return only a short mission in Persian."
         )},
         {"role": "user", "content": (
             f"Question:\n{state.question}\n\nCurrent round: {state.round_number}\n\n"
-            f"Durable state:\n{compact_state(state)}\n\nLatest exchange:\n{recent_text}"
+            f"Durable state:\n{compact_state(state)}\n\nLatest exchange:\n{recent_text}\n\n"
+            f"USER NOTE:\n{note_text}"
         )},
     ]
 
@@ -66,9 +69,9 @@ def moderator_round_update_prompt(state: DebateState, mission: str, agent1: str,
 def moderator_summary_prompt(state: DebateState) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": (
-            "You are the final Moderator for a completed 10-round segment. Produce a decision-useful master summary in Persian. "
-            "Use the durable state created by the round evaluations. Distinguish consensus from unresolved disagreement. "
-            "Preserve concrete proposals, risks, trade-offs, resolved issues, and open questions. Do not invent facts."
+            "You are the final Moderator for a completed debate segment. Produce a decision-useful master summary in Persian. "
+            "Distinguish consensus from unresolved disagreement. Preserve concrete proposals, risks, trade-offs, resolved issues, "
+            "and open questions. Do not invent facts."
         )},
         {"role": "user", "content": (
             f"Question:\n{state.question}\n\nDurable state accumulated during this segment:\n{compact_state(state)}\n\n"
