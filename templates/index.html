@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI Debate — Local Multi-Model Debate</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>AI Debate</h1>
+      <p>مناظره‌ی چندمدلی محلی با Moderator فعال و بخش‌های ۱۰ راندی</p>
+    </header>
+
+    <section class="panel">
+      <label for="question">موضوع مناظره</label>
+      <textarea id="question" rows="4" placeholder="مثلاً: بهترین معماری برای ساخت یک برنامه ماشین‌حساب چیست؟"></textarea>
+      <div class="actions">
+        <button id="start">شروع مناظره</button>
+        <button id="stop" class="danger" disabled>توقف</button>
+        <button id="continue" class="secondary" disabled>ادامه با Context فشرده</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>وضعیت مدل‌ها</h2>
+      <div id="health" class="health-grid"></div>
+    </section>
+
+    <section class="panel status-panel">
+      <div><strong>وضعیت:</strong> <span id="status">آماده</span></div>
+      <div><strong>Segment:</strong> <span id="segment">—</span></div>
+      <div><strong>Round:</strong> <span id="round">—</span> / 10</div>
+    </section>
+
+    <section id="debate" class="debate"></section>
+
+    <section class="panel summary-panel">
+      <h2>Master Summary</h2>
+      <pre id="summary">پس از پایان ۱۰ راند، جمع‌بندی Moderator اینجا نمایش داده می‌شود.</pre>
+    </section>
+
+    <section class="panel state-panel">
+      <h2>وضعیت پایدار Debate</h2>
+      <div class="state-columns">
+        <div><h3>Consensus</h3><ul id="consensus"></ul></div>
+        <div><h3>Disagreements</h3><ul id="disagreements"></ul></div>
+        <div><h3>Proposals</h3><ul id="proposals"></ul></div>
+        <div><h3>Risks</h3><ul id="risks"></ul></div>
+        <div><h3>Open Questions</h3><ul id="open_questions"></ul></div>
+        <div><h3>Decisions</h3><ul id="decisions"></ul></div>
+      </div>
+    </section>
+
+    <div id="log" class="log"></div>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
