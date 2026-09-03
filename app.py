@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from config import AGENT_1, AGENT_2, DEBATE, MODERATOR
-from debate.engine import DebateEngine
+from debate.engine import DebateEngine, DebateStopped
 from debate.llm_client import LLMClient, LLMError
 from debate.models import DebateState
 from debate.moderator import Moderator
@@ -64,10 +64,6 @@ def state_payload() -> dict[str, object]:
     }
 
 
-def health_payload(engine: DebateEngine) -> dict[str, dict[str, object]]:
-    return engine.health_check()
-
-
 def run_segment_background() -> None:
     engine = build_engine()
     with SESSION.lock:
@@ -75,34 +71,22 @@ def run_segment_background() -> None:
         SESSION.error = ""
     emit("segment_start", segment=SESSION.state.segment_number, rounds=DEBATE.rounds_per_segment)
     try:
-        result = engine.run_segment(
-            SESSION.state,
-            stop_event=SESSION.stop_event,
-            on_event=emit,
-        )
-        if SESSION.stop_event.is_set():
-            with SESSION.lock:
-                SESSION.status = "stopped"
-            emit("stopped", reason="User requested stop.", state=state_payload())
-            return
-
+        result = engine.run_segment(SESSION.state, stop_event=SESSION.stop_event, on_event=emit)
         summary = str(result["summary"]["text"])
         with SESSION.lock:
             SESSION.summary = summary
             SESSION.status = "waiting"
-        emit(
-            "segment_complete",
-            segment=result["segment"],
-            rounds=len(result["rounds"]),
-            summary=summary,
-            state=state_payload(),
-        )
+        emit("segment_complete", segment=result["segment"], rounds=len(result["rounds"]), summary=summary, state=state_payload())
+    except DebateStopped:
+        with SESSION.lock:
+            SESSION.status = "stopped"
+        emit("stopped", reason="Debate stopped by user.", state=state_payload())
     except LLMError as exc:
         with SESSION.lock:
             SESSION.status = "error"
             SESSION.error = str(exc)
         emit("error", message=str(exc), state=state_payload())
-    except Exception as exc:  # defensive boundary for the web worker
+    except Exception as exc:
         with SESSION.lock:
             SESSION.status = "error"
             SESSION.error = f"Unexpected error: {exc}"
@@ -122,20 +106,14 @@ def index() -> str:
 
 @app.get("/api/health")
 def api_health():
-    engine = build_engine()
-    health = health_payload(engine)
+    health = build_engine().health_check()
     return jsonify({"ok": all(bool(item.get("ok")) for item in health.values()), "models": health})
 
 
 @app.get("/api/status")
 def api_status():
     with SESSION.lock:
-        return jsonify({
-            "status": SESSION.status,
-            "summary": SESSION.summary,
-            "error": SESSION.error,
-            "state": state_payload(),
-        })
+        return jsonify({"status": SESSION.status, "summary": SESSION.summary, "error": SESSION.error, "state": state_payload()})
 
 
 @app.post("/api/start")
@@ -144,13 +122,12 @@ def api_start():
     question = str(data.get("question", "")).strip()
     if not question:
         return jsonify({"ok": False, "error": "Question is required."}), 400
-
     with SESSION.lock:
-        if SESSION.status == "running":
+        if SESSION.status in {"starting", "running", "stopping"}:
             return jsonify({"ok": False, "error": "A debate is already running."}), 409
 
     engine = build_engine()
-    health = health_payload(engine)
+    health = engine.health_check()
     if not all(bool(item.get("ok")) for item in health.values()):
         return jsonify({"ok": False, "error": "One or more local LLM servers are unavailable.", "models": health}), 503
 
@@ -161,7 +138,6 @@ def api_start():
         SESSION.error = ""
         SESSION.stop_event.clear()
         SESSION.events = queue.Queue()
-
     emit("health", models=health)
     emit("question", question=question)
     start_thread()
@@ -173,8 +149,7 @@ def api_continue():
     with SESSION.lock:
         if SESSION.status != "waiting" or SESSION.state is None:
             return jsonify({"ok": False, "error": "Continue is available only after a completed segment."}), 409
-        summary = SESSION.summary
-        SESSION.state.compact(summary)
+        SESSION.state.compact(SESSION.summary)
         SESSION.summary = ""
         SESSION.status = "starting"
         SESSION.error = ""
@@ -187,7 +162,7 @@ def api_continue():
 @app.post("/api/stop")
 def api_stop():
     with SESSION.lock:
-        if SESSION.status != "running":
+        if SESSION.status not in {"running", "starting"}:
             return jsonify({"ok": True, "status": SESSION.status})
         SESSION.stop_event.set()
         SESSION.status = "stopping"
