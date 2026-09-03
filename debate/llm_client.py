@@ -5,13 +5,32 @@ import requests
 from config import ModelConfig
 
 
+class LLMError(RuntimeError):
+    pass
+
+
 class LLMClient:
-    """Minimal client for local OpenAI-compatible inference servers."""
+    """OpenAI-compatible client for local llama-server instances."""
 
     def __init__(self, config: ModelConfig):
         self.config = config
 
-    def complete(self, messages: Iterable[dict[str, str]], max_tokens: int) -> str:
+    def health_check(self) -> dict[str, object]:
+        base = self.config.base_url.rstrip("/")
+        candidates = (f"{base}/models", f"{base}/health")
+        last_error = "unknown error"
+        for url in candidates:
+            try:
+                response = requests.get(url, timeout=self.config.health_timeout)
+                if response.ok:
+                    data = response.json() if response.content else {}
+                    return {"ok": True, "url": url, "model": self.config.name, "data": data}
+                last_error = f"HTTP {response.status_code}"
+            except requests.RequestException as exc:
+                last_error = str(exc)
+        return {"ok": False, "url": base, "model": self.config.name, "error": last_error}
+
+    def complete(self, messages: Iterable[dict[str, str]], max_tokens: int) -> dict[str, object]:
         url = self.config.base_url.rstrip("/") + "/chat/completions"
         payload = {
             "model": self.config.name,
@@ -19,7 +38,24 @@ class LLMClient:
             "temperature": self.config.temperature,
             "max_tokens": max_tokens,
         }
-        response = requests.post(url, json=payload, timeout=self.config.timeout)
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
+        try:
+            response = requests.post(url, json=payload, timeout=self.config.timeout)
+            response.raise_for_status()
+            data = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            raise LLMError(f"{self.config.role} request failed: {exc}") from exc
+
+        try:
+            choice = data["choices"][0]
+            message = choice.get("message") or {}
+            content = (message.get("content") or "").strip()
+            finish_reason = choice.get("finish_reason")
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMError(f"{self.config.role} returned an invalid response: {data!r}") from exc
+
+        return {
+            "text": content,
+            "finish_reason": finish_reason,
+            "usage": data.get("usage"),
+            "raw": data,
+        }
