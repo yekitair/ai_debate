@@ -4,6 +4,7 @@ from .prompts import moderator_mission_prompt, moderator_round_update_prompt, mo
 
 MARKERS = ("[CONSENSUS]", "[DISAGREEMENTS]", "[NEW]", "[RISKS]", "[RESOLVED]", "[OPEN]", "[NEXT]")
 
+
 class Moderator:
     def __init__(self, client: LLMClient, max_tokens: int, summary_max_tokens: int):
         self.client = client
@@ -44,7 +45,8 @@ class Moderator:
                 pos = text.find(other, start)
                 if pos >= 0:
                     end = min(end, pos)
-        return [line.strip(" -•\t") for line in text[start:end].splitlines() if line.strip(" -•\t")]
+        items = [line.strip(" -•\t") for line in text[start:end].splitlines()]
+        return [item for item in items if item and item.lower() not in {"none", "هیچ", "موردی نیست", "ندارد"}]
 
     def _merge_markers(self, state: DebateState, text: str) -> None:
         mapping = {
