@@ -15,6 +15,13 @@ class DebateState:
     round_number: int = 0
     arguments: list[Argument] = field(default_factory=list)
     durable_summary: str = ""
+    consensus: list[str] = field(default_factory=list)
+    disagreements: list[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+    decisions: list[str] = field(default_factory=list)
+    proposals: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    discussed_topics: list[str] = field(default_factory=list)
 
     @property
     def completed_rounds(self) -> int:
@@ -24,6 +31,7 @@ class DebateState:
         self.arguments.append(Argument(agent, self.round_number, text))
 
     def compact(self, summary: str) -> None:
+        # The next segment must never inherit the previous live transcript.
         self.durable_summary = summary.strip()
         self.arguments.clear()
         self.round_number = 0
