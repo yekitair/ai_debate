@@ -11,8 +11,8 @@ class Moderator:
         self.max_tokens = max_tokens
         self.summary_max_tokens = summary_max_tokens
 
-    def mission(self, state: DebateState) -> dict[str, object]:
-        result = self.client.complete(moderator_mission_prompt(state), self.max_tokens)
+    def mission(self, state: DebateState, user_note: str = "") -> dict[str, object]:
+        result = self.client.complete(moderator_mission_prompt(state, user_note), self.max_tokens)
         text = str(result["text"]).strip()
         if not text:
             raise LLMError("Moderator returned an empty mission")
