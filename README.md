@@ -1,6 +1,6 @@
 # AI Debate
 
-A local multi-model debate system with an active Moderator, two deliberately different agents, bounded context, 10-round segments, and a Persian RTL web interface.
+A local multi-model debate system with an active Moderator, two deliberately different agents, bounded context, configurable round segments, human intervention notes, and a Persian RTL web interface.
 
 ## Final architecture
 
@@ -23,27 +23,25 @@ Browser
 | Agent 1 | `Qwen3-8B-Q5_K_M.gguf` | `127.0.0.1:8080` | GPU | Constructive systems analyst and solution strategist |
 | Agent 2 | `qwen2.5-coder-7b-instruct-q6_k.gguf` | `127.0.0.1:8082` | CPU | Adversarial critic / red-team analyst |
 
-The role assignment above is authoritative. If local BAT files use another assignment, correct them before starting the application.
-
 ## Roles
 
 ### Moderator — active protocol controller
 
-The Moderator is **not** a simple summarizer. In every round it chooses the most valuable mission, forces progress, evaluates both contributions, extracts consensus/disagreement/new proposals/risks/resolved issues/open questions, and identifies the next direction. After Round 10 it produces the Master Summary.
+The Moderator is **not** a simple summarizer. At the beginning of every round it chooses the most valuable mission, can incorporate a human operator note, forces progress, and then evaluates both contributions. It extracts consensus, disagreement, new proposals, risks, resolved issues, open questions, and the next direction. At the end of the configured segment it produces the Master Summary.
 
 Python owns the canonical `DebateState`; the Moderator supplies incremental state information.
 
 ### Agent 1 — constructive strategist
 
-Agent 1 builds the strongest technically coherent solution. It emphasizes feasibility, systems thinking, evidence, concrete proposals, and useful advancement. It directly engages the current mission and Agent 2 rather than repeating old ideas.
+Agent 1 builds the strongest technically coherent solution. It emphasizes feasibility, systems thinking, evidence, concrete proposals, and useful advancement.
 
 ### Agent 2 — adversarial critic
 
-Agent 2 stress-tests assumptions, contradictions, failure modes, hidden costs, risks, and trade-offs. It concedes valid points when warranted and proposes better alternatives when criticism reveals a weakness. Its job is not to disagree mechanically.
+Agent 2 stress-tests assumptions, contradictions, failure modes, hidden costs, risks, and trade-offs. It concedes valid points when warranted and proposes better alternatives when criticism reveals a weakness. It does not disagree mechanically.
 
-## Exact segment protocol
+## Segment protocol
 
-Every segment is exactly 10 rounds:
+A Segment has a **user-configurable number of rounds**. The UI defaults to 10 and permits 1–100 rounds.
 
 ```text
 Question
@@ -51,17 +49,30 @@ Question
 Health-check all 3 LLM servers
   ↓
 Segment N
-  ├─ Round 1: Moderator Mission → Agent 1 → Agent 2 → Moderator Evaluation
-  ├─ Round 2: Moderator Mission → Agent 1 → Agent 2 → Moderator Evaluation
-  ├─ ...
-  └─ Round 10: Moderator Mission → Agent 1 → Agent 2 → Moderator Evaluation
+  ├─ Round 1..N:
+  │    Moderator Mission
+  │      ↓
+  │    Agent 1 → Agent 2
+  │      ↓
+  │    Moderator Evaluation / durable-state update
   ↓
-Moderator Master Summary
+Master Summary
   ↓
 WAIT: Continue or Stop
 ```
 
-The UI streams missions, agent responses, Moderator evaluations, state changes, and the final summary live through Server-Sent Events.
+The user also chooses a maximum output-token budget per model response (128–4096, default 1200). If a model reports `finish_reason=length`, the UI marks the response as truncated.
+
+## Human operator notes
+
+While a debate is running, the user can enter a note at any time. The note is queued in Python and is **not** sent to the agents. When the next Moderator turn begins:
+
+1. Python archives the note with Segment/Round metadata.
+2. The pending note is removed from the active queue.
+3. The Moderator receives the archived note as a human instruction/observation.
+4. The UI marks that the note was consumed.
+
+Thus a note is read once by the Moderator and then no longer remains pending. The archived copy remains available for the Word export.
 
 ## Context isolation and compaction
 
@@ -81,23 +92,30 @@ Master Summary + durable DebateState
 Question + durable state only
 ```
 
-The next segment therefore does **not** receive the previous raw transcript. The three `llama-server` processes continue running; only Python-side debate context is reset. Durable fields include consensus, disagreements, proposals, risks, decisions, open questions, and discussed topics. The context manager bounds accumulated state sent to models.
-
-## Health and failure handling
-
-Before starting a debate, Flask checks all three local servers. A missing required server prevents the debate from starting. The client preserves `finish_reason`, usage metadata, and raw response data for diagnostics.
-
-Empty or malformed model responses fail safely. A user stop is handled separately from an LLM failure. If a model returns `finish_reason = length`, the UI marks that response as truncated.
+The next segment therefore does **not** receive the previous raw transcript. The three `llama-server` processes continue running; only Python-side debate context is reset. Durable fields include consensus, disagreements, proposals, risks, decisions, open questions, and discussed topics.
 
 ## Web UI
 
-The web application listens on:
+The application listens on:
 
 ```text
 http://127.0.0.1:5000
 ```
 
-It provides Persian RTL question input, model health, Start/Stop/Continue controls, live segment/round counters, Moderator missions/evaluations, both agent responses, Master Summary, durable state panels, and error reporting.
+It provides:
+
+- Persian RTL question input
+- configurable rounds per Segment
+- configurable output-token budget
+- health status for all three local servers
+- Start / Stop / Continue
+- live Segment and Round counters
+- live Moderator missions/evaluations
+- Agent 1 and Agent 2 responses
+- human note input during the debate
+- Master Summary
+- durable state panels
+- **Save Result as Word (.docx)** after at least one Segment completes
 
 The Flask server does not start or restart local `llama-server` processes. Start those three servers separately.
 
@@ -134,35 +152,36 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Then open `http://127.0.0.1:5000`.
+Then open:
+
+```text
+http://127.0.0.1:5000
+```
 
 ## Project structure
 
 ```text
 ai_debate/
-├── app.py
-├── config.py
+├── app.py                    # Flask UI, API, SSE, session lifecycle, Word export
+├── config.py                 # model roles and default/range settings
 ├── requirements.txt
 ├── .env.example
-├── templates/
-│   └── index.html
-├── static/
-│   ├── app.js
-│   └── style.css
-├── tests/
-│   └── test_debate_flow.py
+├── templates/index.html      # Persian RTL UI
+├── static/app.js             # UI + SSE client
+├── static/style.css
+├── tests/test_debate_flow.py # deterministic protocol test
 └── debate/
-    ├── engine.py
-    ├── models.py
-    ├── llm_client.py
-    ├── prompts.py
-    ├── context_manager.py
-    └── moderator.py
+    ├── engine.py             # segment state machine
+    ├── models.py             # DebateState and Argument
+    ├── llm_client.py         # local OpenAI-compatible adapter + health check
+    ├── prompts.py            # role-specific prompts and Moderator protocol
+    ├── context_manager.py    # bounded durable context / transcript isolation
+    └── moderator.py          # missions, evaluations, state deltas, summary
 ```
 
 ## Deterministic protocol test
 
-The model-free test verifies: 10 rounds → 20 live agent arguments → 10 Moderator missions → 10 Moderator evaluations → 1 segment summary → compaction → transcript cleared → segment increment → another 10-round segment.
+The model-free test verifies configurable round counts, Moderator mission/evaluation flow, compaction, transcript isolation, and one-time human-note consumption.
 
 Run:
 
@@ -172,13 +191,16 @@ python -m unittest discover -s tests -v
 
 ## Configuration
 
-Defaults live in `config.py` and can be overridden through `.env.example`:
+Defaults and valid ranges live in `config.py`. Environment variables in `.env.example` control defaults; the browser settings override them for each new debate.
 
 ```text
 Moderator: 127.0.0.1:8081 → Gemma4Coding-12B-Q4_K_M
 Agent 1:   127.0.0.1:8080 → Qwen3-8B-Q5_K_M
 Agent 2:   127.0.0.1:8082 → qwen2.5-coder-7b-instruct-q6_k
-Rounds: 10 per segment
+Default rounds: 10
+Allowed rounds: 1–100
+Default output tokens: 1200
+Allowed output tokens: 128–4096
 Web UI: 127.0.0.1:5000
 ```
 
