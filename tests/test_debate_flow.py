@@ -24,9 +24,11 @@ class FakeModerator:
         self.missions = 0
         self.updates = 0
         self.summaries = 0
+        self.notes = []
 
-    def mission(self, state):
+    def mission(self, state, user_note=""):
         self.missions += 1
+        self.notes.append(user_note)
         return {"text": f"Mission {self.missions}", "finish_reason": "stop"}
 
     def update_state(self, state, mission, agent1, agent2):
@@ -40,20 +42,23 @@ class FakeModerator:
 
 
 class DebateFlowTest(unittest.TestCase):
-    def test_exactly_ten_rounds_and_compaction_discards_transcript(self):
+    def test_runtime_rounds_compaction_and_human_note_consumption(self):
         agent1 = FakeClient("agent1")
         agent2 = FakeClient("agent2")
         moderator = FakeModerator()
-        engine = DebateEngine(agent1, agent2, moderator, rounds_per_segment=10, agent_max_tokens=900)
+        engine = DebateEngine(agent1, agent2, moderator, rounds_per_segment=3, agent_max_tokens=500)
         state = DebateState(question="Test question")
+        notes = iter(["Human note: consider cost.", "", ""])
 
-        first = engine.run_segment(state)
-        self.assertEqual(len(first["rounds"]), 10)
-        self.assertEqual(state.round_number, 10)
-        self.assertEqual(len(state.arguments), 20)
-        self.assertEqual(moderator.missions, 10)
-        self.assertEqual(moderator.updates, 10)
+        first = engine.run_segment(state, user_note_provider=lambda: next(notes))
+        self.assertEqual(len(first["rounds"]), 3)
+        self.assertEqual(state.round_number, 3)
+        self.assertEqual(len(state.arguments), 6)
+        self.assertEqual(moderator.missions, 3)
+        self.assertEqual(moderator.updates, 3)
         self.assertEqual(moderator.summaries, 1)
+        self.assertEqual(moderator.notes[0], "Human note: consider cost.")
+        self.assertEqual(moderator.notes[1], "")
 
         package_before = continuation_package(state)
         self.assertNotIn("arguments", package_before)
@@ -65,14 +70,14 @@ class DebateFlowTest(unittest.TestCase):
         self.assertEqual(state.round_number, 0)
         self.assertEqual(state.arguments, [])
         self.assertEqual(state.durable_summary, summary)
-        self.assertIn("Finding 10", compact_state(state))
+        self.assertIn("Finding 3", compact_state(state))
 
-        second = engine.run_segment(state)
-        self.assertEqual(len(second["rounds"]), 10)
-        self.assertEqual(state.round_number, 10)
-        self.assertEqual(len(state.arguments), 20)
-        self.assertEqual(moderator.missions, 20)
-        self.assertEqual(moderator.updates, 20)
+        second = engine.run_segment(state, user_note_provider=lambda: "")
+        self.assertEqual(len(second["rounds"]), 3)
+        self.assertEqual(state.round_number, 3)
+        self.assertEqual(len(state.arguments), 6)
+        self.assertEqual(moderator.missions, 6)
+        self.assertEqual(moderator.updates, 6)
         self.assertEqual(moderator.summaries, 2)
 
 
