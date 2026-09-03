@@ -1,5 +1,6 @@
 import unittest
 
+from debate.context_manager import compact_state, continuation_package
 from debate.engine import DebateEngine
 from debate.models import DebateState
 
@@ -14,12 +15,7 @@ class FakeClient:
 
     def complete(self, messages, max_tokens):
         self.calls += 1
-        return {
-            "text": f"{self.label} response {self.calls}",
-            "finish_reason": "stop",
-            "usage": None,
-            "raw": {},
-        }
+        return {"text": f"{self.label} response {self.calls}", "finish_reason": "stop", "usage": None, "raw": {}}
 
 
 class FakeModerator:
@@ -35,6 +31,7 @@ class FakeModerator:
 
     def update_state(self, state, mission, agent1, agent2):
         self.updates += 1
+        state.proposals.append(f"Finding {self.updates}")
         return {"text": "[NEW]\n- New finding", "finish_reason": "stop"}
 
     def summarize_segment(self, state):
@@ -58,12 +55,17 @@ class DebateFlowTest(unittest.TestCase):
         self.assertEqual(moderator.updates, 10)
         self.assertEqual(moderator.summaries, 1)
 
+        package_before = continuation_package(state)
+        self.assertNotIn("arguments", package_before)
+        self.assertNotIn("agent1 response 1", compact_state(state))
+
         summary = first["summary"]["text"]
         state.compact(summary)
         self.assertEqual(state.segment_number, 2)
         self.assertEqual(state.round_number, 0)
         self.assertEqual(state.arguments, [])
         self.assertEqual(state.durable_summary, summary)
+        self.assertIn("Finding 10", compact_state(state))
 
         second = engine.run_segment(state)
         self.assertEqual(len(second["rounds"]), 10)
