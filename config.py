@@ -14,14 +14,13 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class DebateConfig:
+    # A segment is deliberately fixed at 10 rounds by the protocol.
     rounds_per_segment: int = 10
     agent_max_tokens: int = 900
     moderator_max_tokens: int = 650
     summary_max_tokens: int = 1400
 
 
-# Model identity is deliberately separate from role logic. Any model can be
-# assigned to any role without changing the debate engine.
 MODERATOR = ModelConfig(
     role="moderator",
     name=os.getenv("MODERATOR_MODEL", "gemma4Coding-12B-Q4_K_M"),
@@ -44,7 +43,6 @@ AGENT_2 = ModelConfig(
 )
 
 DEBATE = DebateConfig(
-    rounds_per_segment=int(os.getenv("ROUNDS_PER_SEGMENT", "10")),
     agent_max_tokens=int(os.getenv("AGENT_MAX_TOKENS", "900")),
     moderator_max_tokens=int(os.getenv("MODERATOR_MAX_TOKENS", "650")),
     summary_max_tokens=int(os.getenv("SUMMARY_MAX_TOKENS", "1400")),
