@@ -22,6 +22,7 @@ class DebateState:
     proposals: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
     discussed_topics: list[str] = field(default_factory=list)
+    user_note_archive: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def completed_rounds(self) -> int:
@@ -29,6 +30,13 @@ class DebateState:
 
     def add_argument(self, agent: str, text: str) -> None:
         self.arguments.append(Argument(agent, self.round_number, text))
+
+    def archive_user_note(self, note: str, segment: int, round_number: int) -> None:
+        self.user_note_archive.append({
+            "segment": segment,
+            "round": round_number,
+            "text": note.strip(),
+        })
 
     def compact(self, summary: str) -> None:
         # The next segment must never inherit the previous live transcript.
