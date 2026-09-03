@@ -4,8 +4,10 @@ import json
 import queue
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime
+from io import BytesIO
 
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, jsonify, render_template, request, send_file, stream_with_context
 
 from config import AGENT_1, AGENT_2, DEBATE, MODERATOR
 from debate.engine import DebateEngine, DebateStopped
@@ -22,6 +24,10 @@ class Session:
     status: str = "idle"
     summary: str = ""
     error: str = ""
+    rounds_per_segment: int = DEBATE.default_rounds_per_segment
+    max_tokens: int = DEBATE.default_agent_max_tokens
+    pending_notes: list[str] = field(default_factory=list)
+    history: list[dict[str, object]] = field(default_factory=list)
     stop_event: threading.Event = field(default_factory=threading.Event)
     events: queue.Queue = field(default_factory=queue.Queue)
     thread: threading.Thread | None = None
@@ -31,13 +37,13 @@ class Session:
 SESSION = Session()
 
 
-def build_engine() -> DebateEngine:
+def build_engine(rounds: int, max_tokens: int) -> DebateEngine:
     return DebateEngine(
         LLMClient(AGENT_1),
         LLMClient(AGENT_2),
-        Moderator(LLMClient(MODERATOR), DEBATE.moderator_max_tokens, DEBATE.summary_max_tokens),
-        DEBATE.rounds_per_segment,
-        DEBATE.agent_max_tokens,
+        Moderator(LLMClient(MODERATOR), max_tokens, max_tokens),
+        rounds,
+        max_tokens,
     )
 
 
@@ -61,6 +67,7 @@ def state_payload() -> dict[str, object]:
         "risks": state.risks,
         "discussed_topics": state.discussed_topics,
         "durable_summary": state.durable_summary,
+        "archived_note_count": len(state.user_note_archive),
     }
 
 
@@ -72,19 +79,43 @@ def drain_events() -> None:
             return
 
 
-def run_segment_background() -> None:
-    engine = build_engine()
+def consume_user_notes() -> str:
+    """Archive notes first, then remove them from the pending queue."""
     with SESSION.lock:
+        if not SESSION.pending_notes or SESSION.state is None:
+            return ""
+        notes = SESSION.pending_notes[:]
+        SESSION.pending_notes.clear()
+        for note in notes:
+            SESSION.state.archive_user_note(note, SESSION.state.segment_number, SESSION.state.round_number)
+    return "\n\n".join(notes)
+
+
+def run_segment_background() -> None:
+    with SESSION.lock:
+        rounds = SESSION.rounds_per_segment
+        tokens = SESSION.max_tokens
+        state = SESSION.state
         SESSION.status = "running"
         SESSION.error = ""
-    emit("segment_start", segment=SESSION.state.segment_number, rounds=DEBATE.rounds_per_segment)
+    engine = build_engine(rounds, tokens)
+    emit("segment_start", segment=state.segment_number, rounds=rounds, max_tokens=tokens)
     try:
-        result = engine.run_segment(SESSION.state, stop_event=SESSION.stop_event, on_event=emit)
+        result = engine.run_segment(state, stop_event=SESSION.stop_event, on_event=emit,
+                                   user_note_provider=consume_user_notes)
         summary = str(result["summary"]["text"])
+        history_item = {
+            "segment": result["segment"],
+            "rounds": result["rounds"],
+            "summary": summary,
+            "question": state.question,
+        }
         with SESSION.lock:
+            SESSION.history.append(history_item)
             SESSION.summary = summary
             SESSION.status = "waiting"
-        emit("segment_complete", segment=result["segment"], rounds=len(result["rounds"]), summary=summary, state=state_payload())
+        emit("segment_complete", segment=result["segment"], rounds=len(result["rounds"]),
+             summary=summary, state=state_payload())
     except DebateStopped:
         with SESSION.lock:
             SESSION.status = "stopped"
@@ -114,40 +145,59 @@ def index() -> str:
 
 @app.get("/api/health")
 def api_health():
-    health = build_engine().health_check()
+    health = build_engine(SESSION.rounds_per_segment, SESSION.max_tokens).health_check()
     return jsonify({"ok": all(bool(item.get("ok")) for item in health.values()), "models": health})
 
 
 @app.get("/api/status")
 def api_status():
     with SESSION.lock:
-        return jsonify({"status": SESSION.status, "summary": SESSION.summary, "error": SESSION.error, "state": state_payload()})
+        return jsonify({
+            "status": SESSION.status,
+            "summary": SESSION.summary,
+            "error": SESSION.error,
+            "rounds": SESSION.rounds_per_segment,
+            "max_tokens": SESSION.max_tokens,
+            "pending_notes": len(SESSION.pending_notes),
+            "state": state_payload(),
+        })
 
 
 @app.post("/api/start")
 def api_start():
     data = request.get_json(silent=True) or {}
     question = str(data.get("question", "")).strip()
+    try:
+        rounds = int(data.get("rounds", DEBATE.default_rounds_per_segment))
+        max_tokens = int(data.get("max_tokens", DEBATE.default_agent_max_tokens))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Rounds and token limit must be integers."}), 400
     if not question:
         return jsonify({"ok": False, "error": "Question is required."}), 400
+    if not (DEBATE.min_rounds <= rounds <= DEBATE.max_rounds):
+        return jsonify({"ok": False, "error": f"Rounds must be between {DEBATE.min_rounds} and {DEBATE.max_rounds}."}), 400
+    if not (DEBATE.min_output_tokens <= max_tokens <= DEBATE.max_output_tokens):
+        return jsonify({"ok": False, "error": f"Token limit must be between {DEBATE.min_output_tokens} and {DEBATE.max_output_tokens}."}), 400
     with SESSION.lock:
         if SESSION.status in {"starting", "running", "stopping"}:
             return jsonify({"ok": False, "error": "A debate is already running."}), 409
-
-    engine = build_engine()
+    engine = build_engine(rounds, max_tokens)
     health = engine.health_check()
     if not all(bool(item.get("ok")) for item in health.values()):
         return jsonify({"ok": False, "error": "One or more local LLM servers are unavailable.", "models": health}), 503
-
     with SESSION.lock:
         drain_events()
         SESSION.state = DebateState(question=question)
         SESSION.status = "starting"
         SESSION.summary = ""
         SESSION.error = ""
+        SESSION.rounds_per_segment = rounds
+        SESSION.max_tokens = max_tokens
+        SESSION.pending_notes.clear()
+        SESSION.history.clear()
         SESSION.stop_event.clear()
     emit("health", models=health)
-    emit("question", question=question)
+    emit("question", question=question, rounds=rounds, max_tokens=max_tokens)
     start_thread()
     return jsonify({"ok": True, "state": state_payload()})
 
@@ -178,6 +228,72 @@ def api_stop():
     return jsonify({"ok": True})
 
 
+@app.post("/api/note")
+def api_note():
+    data = request.get_json(silent=True) or {}
+    note = str(data.get("note", "")).strip()
+    if not note:
+        return jsonify({"ok": False, "error": "Note is empty."}), 400
+    with SESSION.lock:
+        if SESSION.status not in {"running", "starting"} or SESSION.state is None:
+            return jsonify({"ok": False, "error": "A debate must be running before adding a note."}), 409
+        SESSION.pending_notes.append(note)
+        pending = len(SESSION.pending_notes)
+    emit("note_queued", pending=pending, message="یادداشت شما برای نوبت بعدی Moderator ثبت شد.")
+    return jsonify({"ok": True, "pending": pending})
+
+
+@app.get("/api/export/docx")
+def export_docx():
+    with SESSION.lock:
+        if not SESSION.history:
+            return jsonify({"ok": False, "error": "No completed segment is available to export."}), 409
+        question = SESSION.state.question if SESSION.state else SESSION.history[0]["question"]
+        history = list(SESSION.history)
+        archived_notes = list(SESSION.state.user_note_archive) if SESSION.state else []
+        state = state_payload()
+    try:
+        from docx import Document
+    except ImportError:
+        return jsonify({"ok": False, "error": "python-docx is not installed. Run: pip install python-docx"}), 500
+
+    doc = Document()
+    doc.add_heading("AI Debate — نتیجه مناظره", 0)
+    doc.add_paragraph(f"تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    doc.add_heading("موضوع", level=1)
+    doc.add_paragraph(question)
+
+    for segment in history:
+        doc.add_heading(f"Segment {segment['segment']}", level=1)
+        for rnd in segment["rounds"]:
+            doc.add_heading(f"Round {rnd['round']}", level=2)
+            doc.add_paragraph(f"Moderator — Mission: {rnd['mission']}")
+            for agent in rnd["agents"]:
+                doc.add_paragraph(f"{agent['name']}: {agent['text']}")
+            doc.add_paragraph(f"Moderator — Evaluation:\n{rnd['moderator_update']['text']}")
+        doc.add_heading("Master Summary", level=2)
+        doc.add_paragraph(segment["summary"])
+
+    doc.add_heading("وضعیت پایدار نهایی", level=1)
+    for title, key in (("Consensus", "consensus"), ("Disagreements", "disagreements"), ("Proposals", "proposals"),
+                       ("Risks", "risks"), ("Open Questions", "open_questions"), ("Decisions", "decisions")):
+        doc.add_heading(title, level=2)
+        for item in state.get(key, []):
+            doc.add_paragraph(str(item), style="List Bullet")
+
+    if archived_notes:
+        doc.add_heading("Human Notes — Archive", level=1)
+        for item in archived_notes:
+            doc.add_paragraph(f"Segment {item['segment']} / Round {item['round']}: {item['text']}")
+
+    output = BytesIO()
+    doc.save(output)
+    output.seek(0)
+    filename = f"ai_debate_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+    return send_file(output, as_attachment=True, download_name=filename,
+                     mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+
 @app.get("/stream")
 def stream():
     @stream_with_context
@@ -185,8 +301,8 @@ def stream():
         while True:
             event = SESSION.events.get()
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-    return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 if __name__ == "__main__":
