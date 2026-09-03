@@ -1,60 +1,130 @@
 # AI Debate
 
-A local multi-model debate system that orchestrates two debate agents and a dedicated moderator.
+A local multi-model debate engine for structured, iterative reasoning with bounded context.
 
-> **Status:** Initial architecture / implementation scaffold
->
-> This project is intentionally independent of BAES for now. A future BAES adapter may be added without coupling the core debate engine to BAES.
+> **Current status:** Core protocol refactored around explicit roles, a real moderator, 10-round segments, health checks, and context compaction.
 
 ## Model topology
 
-| Role | Model | Endpoint | Runtime |
-|---|---|---|---|
-| Moderator | StupidModel-6b | `http://127.0.0.1:8081/v1` | CPU |
-| Agent 1 | Qwen3-8B | `http://127.0.0.1:8080/v1` | GPU |
-| Agent 2 | gemma4Coding-12B | `http://127.0.0.1:8082/v1` | CPU |
+| Role | Model | Endpoint | Runtime | Primary responsibility |
+|---|---|---|---|---|
+| Moderator | `gemma4Coding-12B-Q4_K_M.gguf` | `http://127.0.0.1:8081/v1` | CPU | Coordinate rounds, evaluate arguments, detect agreement/conflict, maintain durable state, produce segment summaries |
+| Agent 1 | `Qwen3-8B-Q5_K_M.gguf` | `http://127.0.0.1:8080/v1` | GPU | Constructive systems analyst and solution strategist |
+| Agent 2 | `qwen2.5-coder-7b-instruct-q6_k.gguf` | `http://127.0.0.1:8082/v1` | CPU | Adversarial critic / red-team analyst |
 
-The endpoints are configurable through environment variables or `config.py`.
+`StupidModel` has been removed from the active architecture.
 
-## Core debate protocol
+**Important launch-script alignment:** the role assignment above is authoritative. The Moderator server on port `8081` must run Gemma 4 Coding 12B. Agent 2 on port `8082` must run Qwen2.5-Coder 7B. If local `.bat` files still contain the opposite assignment, update them before testing.
 
-1. The user submits a debate question/mission.
-2. The engine creates an explicit debate state.
-3. Agent 1 and Agent 2 argue opposing positions.
-4. The Moderator observes the exchange and controls the protocol; it is not a debate contestant.
-5. A debate segment contains **10 rounds**.
-6. At the end of the 10th round, the Moderator produces a structured summary/state.
-7. The user chooses whether to stop or continue for another 10 rounds.
-8. Before continuation, Python compacts/clears the live conversational context. The next segment receives only the durable summary/state required to continue.
+Model identity and role logic are separate in `config.py`, so roles can be reassigned later without redesigning the debate engine.
 
-This prevents unbounded context growth while preserving the logical state of the debate.
+## Agent roles
+
+### Agent 1 — Constructive Strategist
+
+- Builds the strongest coherent solution.
+- Uses systems thinking, feasibility, evidence, and concrete proposals.
+- Directly addresses the current mission and Agent 2's latest critique.
+- Advances the discussion instead of repeating previous ideas.
+
+### Agent 2 — Adversarial Critic
+
+- Stress-tests Agent 1's claims and assumptions.
+- Searches for contradictions, failure modes, hidden costs, and trade-offs.
+- Concedes points when justified.
+- Produces better alternatives when criticism exposes a weakness.
+
+Neither agent is the moderator and neither agent is responsible for the canonical debate state.
+
+## Moderator responsibilities
+
+The Moderator is an active protocol controller, not a simple summarizer. For every round it:
+
+1. Selects the most valuable mission for the round.
+2. Forces the agents toward a specific unresolved issue or useful extension.
+3. Evaluates both contributions after the exchange.
+4. Extracts consensus, disagreements, new proposals, risks, resolved issues, and open questions.
+5. Identifies the next direction of investigation.
+6. Produces the master summary at the end of the segment.
+
+Python owns the canonical `DebateState`; the Moderator supplies state deltas rather than replacing the state wholesale.
+
+## Segment protocol
+
+A segment always contains **10 rounds**:
+
+```text
+Question
+   ↓
+Segment N
+   ├─ Round 1: Moderator mission → Agent 1 → Agent 2 → Moderator evaluation
+   ├─ Round 2: Moderator mission → Agent 1 → Agent 2 → Moderator evaluation
+   ├─ ...
+   └─ Round 10: Moderator mission → Agent 1 → Agent 2 → Moderator evaluation
+   ↓
+Moderator Master Summary
+   ↓
+User: Stop OR Continue
+```
+
+If the user continues:
+
+```text
+Master Summary + durable Debate State
+             ↓
+      Python compacts context
+             ↓
+   Old live transcript discarded
+             ↓
+        Fresh Segment N+1
+             ↓
+Moderator mission → Agent 1 → Agent 2 → ...
+```
+
+The next segment never receives the previous live transcript. Only the original question and durable state are carried forward.
+
+## Context management
+
+`DebateState.arguments` contains only the live transcript for the current segment. `compact()` clears those arguments and increments the segment number. Durable fields such as consensus, disagreements, proposals, risks, decisions, and open questions remain available to the next segment.
+
+This prevents unbounded context growth and prevents accidental transcript leakage between segments.
+
+## Health checks
+
+Before a debate starts, the application checks all three local OpenAI-compatible endpoints. A debate does not begin when any required server is unavailable.
+
+The client also preserves `finish_reason`, usage metadata, and the raw response for diagnostics. Empty or malformed model responses fail safely instead of silently corrupting debate state.
 
 ## Architecture
 
 ```text
 ai_debate/
-├── app.py                    # Application entry point
-├── config.py                 # Runtime/model configuration
+├── app.py                    # CLI entry point and lifecycle
+├── config.py                 # Model/role and debate configuration
 ├── requirements.txt
 ├── .env.example
 └── debate/
     ├── __init__.py
-    ├── engine.py             # Debate state machine / orchestration
-    ├── models.py             # Typed domain models
-    ├── llm_client.py         # OpenAI-compatible local LLM adapter
-    ├── prompts.py            # Role-specific prompt construction
-    ├── context_manager.py    # Context compaction and continuation state
-    └── moderator.py          # Moderator-specific logic
+    ├── engine.py             # 10-round protocol state machine
+    ├── models.py             # DebateState and Argument
+    ├── llm_client.py         # Local OpenAI-compatible adapter + health check
+    ├── prompts.py            # Role-specific prompts and moderator protocol
+    ├── context_manager.py    # Durable state and transcript compaction
+    └── moderator.py          # Mission, evaluation, state delta, summary
 ```
 
-### Design principles
+## Configuration
 
-- **Separation of concerns:** orchestration, model access, prompts, and state management are independent.
-- **Provider neutrality:** models are accessed through an OpenAI-compatible HTTP adapter; the core engine does not know about llama-server internals.
-- **Explicit state:** debate state is represented by typed objects rather than hidden prompt history.
-- **Bounded context:** only the current 10-round segment is kept live; continuation uses a compact state package.
-- **Moderator authority:** the moderator controls round progression, summaries, and protocol-level observations.
-- **No BAES coupling:** BAES-specific behavior belongs in a future adapter, not in the core engine.
+Defaults are defined in `config.py` and can be overridden through environment variables. See `.env.example`.
+
+Current defaults:
+
+```text
+Moderator: 127.0.0.1:8081 → Gemma4Coding-12B-Q4_K_M
+Agent 1:   127.0.0.1:8080 → Qwen3-8B-Q5_K_M
+Agent 2:   127.0.0.1:8082 → qwen2.5-coder-7b-instruct-q6_k
+Rounds: 10 per segment
+```
 
 ## Run
 
@@ -66,14 +136,14 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Make sure the three local OpenAI-compatible servers are running, then:
+Start the three local llama-server instances with the role/port assignment above, then:
 
 ```bash
 python app.py
 ```
 
-Configuration can be overridden with environment variables. See `.env.example`.
+The application performs a health check first, runs exactly 10 rounds, asks whether to continue, and when continued starts the next segment from compact durable state without restarting llama-server.
 
-## Current implementation scope
+## Scope
 
-The first implementation focuses on a reliable protocol engine and local-model adapter. UI/API layers can be added on top without changing the domain/state model.
+The current repository focuses on the core protocol and local-model adapter. A richer Web UI can be layered on top of the same engine without changing the debate/state architecture.
