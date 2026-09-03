@@ -2,6 +2,16 @@ from dataclasses import dataclass
 import os
 
 
+LANGUAGE_OPTIONS = {
+    "auto": "خودکار — تشخیص از پرسش",
+    "fa": "فارسی",
+    "en": "English",
+    "de": "Deutsch",
+    "fr": "Français",
+    "zh": "中文",
+}
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     role: str
@@ -41,7 +51,7 @@ AGENT_1 = ModelConfig(
 AGENT_2 = ModelConfig(
     role="agent_2",
     name=os.getenv("AGENT2_MODEL", "qwen2.5-coder-7b-instruct-q6_k"),
-    base_url=os.getenv("AGENT2_URL", "http://127.0.0.1:8082/v1"),
+    base_url=os.getenv("AGENT2_URL", "http://127.0.0.1:8080/v1"),
     temperature=float(os.getenv("AGENT2_TEMPERATURE", "0.5")),
 )
 
