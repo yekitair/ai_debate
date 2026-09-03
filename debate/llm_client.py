@@ -1,4 +1,5 @@
 from typing import Iterable
+from urllib.parse import urlsplit
 
 import requests
 
@@ -17,13 +18,18 @@ class LLMClient:
 
     def health_check(self) -> dict[str, object]:
         base = self.config.base_url.rstrip("/")
-        candidates = (f"{base}/models", f"{base}/health")
+        parsed = urlsplit(base)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        candidates = (f"{origin}/health", f"{base}/models", f"{base}/health")
         last_error = "unknown error"
         for url in candidates:
             try:
                 response = requests.get(url, timeout=self.config.health_timeout)
                 if response.ok:
-                    data = response.json() if response.content else {}
+                    try:
+                        data = response.json() if response.content else {}
+                    except ValueError:
+                        data = {"text": response.text[:200]}
                     return {"ok": True, "url": url, "model": self.config.name, "data": data}
                 last_error = f"HTTP {response.status_code}"
             except requests.RequestException as exc:
