@@ -9,13 +9,44 @@ from io import BytesIO
 
 from flask import Flask, Response, jsonify, render_template, request, send_file, stream_with_context
 
-from config import AGENT_1, AGENT_2, DEBATE, MODERATOR
+from config import AGENT_1, AGENT_2, DEBATE, LANGUAGE_OPTIONS, MODERATOR
 from debate.engine import DebateEngine, DebateStopped
 from debate.llm_client import LLMClient, LLMError
 from debate.models import DebateState
 from debate.moderator import Moderator
 
 app = Flask(__name__)
+
+LANGUAGE_NAMES = {key: value for key, value in LANGUAGE_OPTIONS.items() if key != "auto"}
+
+
+def detect_language(text: str) -> str:
+    """Lightweight local language guesser for the supported UI languages."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return "en"
+    fa = sum("\u0600" <= c <= "\u06ff" for c in letters)
+    latin = sum("a" <= c.lower() <= "z" for c in letters)
+    german = sum(c.lower() in "äöüß" for c in text)
+    french = sum(c.lower() in "àâçéèêëîïôùûüÿœæ" for c in text)
+    chinese = sum("\u4e00" <= c <= "\u9fff" for c in text)
+    if chinese > 0:
+        return "zh"
+    if fa / max(1, len(letters)) > 0.25:
+        return "fa"
+    if german > 0:
+        return "de"
+    if french > 0:
+        return "fr"
+    return "en" if latin else "fa"
+
+
+def resolve_language(requested: str, question: str) -> str:
+    if requested == "auto":
+        return detect_language(question)
+    if requested in LANGUAGE_NAMES:
+        return requested
+    raise ValueError(f"Unsupported language: {requested}")
 
 
 @dataclass
@@ -26,6 +57,7 @@ class Session:
     error: str = ""
     rounds_per_segment: int = DEBATE.default_rounds_per_segment
     max_tokens: int = DEBATE.default_agent_max_tokens
+    language_mode: str = "auto"
     pending_notes: list[str] = field(default_factory=list)
     history: list[dict[str, object]] = field(default_factory=list)
     stop_event: threading.Event = field(default_factory=threading.Event)
@@ -54,11 +86,13 @@ def emit(event_type: str, **payload: object) -> None:
 def state_payload() -> dict[str, object]:
     state = SESSION.state
     if state is None:
-        return {"segment": 0, "round": 0, "status": SESSION.status}
+        return {"segment": 0, "round": 0, "status": SESSION.status, "language": "", "language_name": ""}
     return {
         "segment": state.segment_number,
         "round": state.round_number,
         "status": SESSION.status,
+        "language": state.language,
+        "language_name": state.language_name,
         "consensus": state.consensus,
         "disagreements": state.disagreements,
         "open_questions": state.open_questions,
@@ -66,6 +100,7 @@ def state_payload() -> dict[str, object]:
         "proposals": state.proposals,
         "risks": state.risks,
         "discussed_topics": state.discussed_topics,
+        "next_focus": state.next_focus,
         "durable_summary": state.durable_summary,
         "archived_note_count": len(state.user_note_archive),
     }
@@ -80,7 +115,6 @@ def drain_events() -> None:
 
 
 def consume_user_notes() -> str:
-    """Archive notes first, then remove them from the pending queue."""
     with SESSION.lock:
         if not SESSION.pending_notes or SESSION.state is None:
             return ""
@@ -99,7 +133,8 @@ def run_segment_background() -> None:
         SESSION.status = "running"
         SESSION.error = ""
     engine = build_engine(rounds, tokens)
-    emit("segment_start", segment=state.segment_number, rounds=rounds, max_tokens=tokens)
+    emit("segment_start", segment=state.segment_number, rounds=rounds, max_tokens=tokens,
+         language=state.language, language_name=state.language_name)
     try:
         result = engine.run_segment(state, stop_event=SESSION.stop_event, on_event=emit,
                                    user_note_provider=consume_user_notes)
@@ -109,6 +144,8 @@ def run_segment_background() -> None:
             "rounds": result["rounds"],
             "summary": summary,
             "question": state.question,
+            "language": state.language,
+            "language_name": state.language_name,
         }
         with SESSION.lock:
             SESSION.history.append(history_item)
@@ -140,7 +177,7 @@ def start_thread() -> None:
 
 @app.get("/")
 def index() -> str:
-    return render_template("index.html")
+    return render_template("index.html", language_options=LANGUAGE_OPTIONS)
 
 
 @app.get("/api/health")
@@ -158,6 +195,9 @@ def api_status():
             "error": SESSION.error,
             "rounds": SESSION.rounds_per_segment,
             "max_tokens": SESSION.max_tokens,
+            "language_mode": SESSION.language_mode,
+            "language": SESSION.state.language if SESSION.state else "",
+            "language_name": SESSION.state.language_name if SESSION.state else "",
             "pending_notes": len(SESSION.pending_notes),
             "state": state_payload(),
         })
@@ -167,11 +207,13 @@ def api_status():
 def api_start():
     data = request.get_json(silent=True) or {}
     question = str(data.get("question", "")).strip()
+    requested_language = str(data.get("language", "auto")).strip().lower()
     try:
         rounds = int(data.get("rounds", DEBATE.default_rounds_per_segment))
         max_tokens = int(data.get("max_tokens", DEBATE.default_agent_max_tokens))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Rounds and token limit must be integers."}), 400
+        language = resolve_language(requested_language, question)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc) or "Invalid settings."}), 400
     if not question:
         return jsonify({"ok": False, "error": "Question is required."}), 400
     if not (DEBATE.min_rounds <= rounds <= DEBATE.max_rounds):
@@ -187,17 +229,19 @@ def api_start():
         return jsonify({"ok": False, "error": "One or more local LLM servers are unavailable.", "models": health}), 503
     with SESSION.lock:
         drain_events()
-        SESSION.state = DebateState(question=question)
+        SESSION.state = DebateState(question=question, language=language, language_name=LANGUAGE_NAMES[language])
         SESSION.status = "starting"
         SESSION.summary = ""
         SESSION.error = ""
         SESSION.rounds_per_segment = rounds
         SESSION.max_tokens = max_tokens
+        SESSION.language_mode = requested_language
         SESSION.pending_notes.clear()
         SESSION.history.clear()
         SESSION.stop_event.clear()
     emit("health", models=health)
-    emit("question", question=question, rounds=rounds, max_tokens=max_tokens)
+    emit("question", question=question, rounds=rounds, max_tokens=max_tokens,
+         language=language, language_name=LANGUAGE_NAMES[language], language_mode=requested_language)
     start_thread()
     return jsonify({"ok": True, "state": state_payload()})
 
@@ -260,6 +304,7 @@ def export_docx():
     doc = Document()
     doc.add_heading("AI Debate — نتیجه مناظره", 0)
     doc.add_paragraph(f"تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    doc.add_paragraph(f"زبان مناظره: {state.get('language_name') or history[0].get('language_name', '')}")
     doc.add_heading("موضوع", level=1)
     doc.add_paragraph(question)
 
