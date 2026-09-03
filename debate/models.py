@@ -11,6 +11,8 @@ class Argument:
 @dataclass
 class DebateState:
     question: str
+    language: str = "fa"
+    language_name: str = "فارسی"
     segment_number: int = 1
     round_number: int = 0
     arguments: list[Argument] = field(default_factory=list)
@@ -22,6 +24,7 @@ class DebateState:
     proposals: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
     discussed_topics: list[str] = field(default_factory=list)
+    next_focus: list[str] = field(default_factory=list)
     user_note_archive: list[dict[str, object]] = field(default_factory=list)
 
     @property
@@ -39,7 +42,6 @@ class DebateState:
         })
 
     def compact(self, summary: str) -> None:
-        # The next segment must never inherit the previous live transcript.
         self.durable_summary = summary.strip()
         self.arguments.clear()
         self.round_number = 0
