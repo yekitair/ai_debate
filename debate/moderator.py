@@ -48,17 +48,42 @@ class Moderator:
         items = [line.strip(" -•\t") for line in text[start:end].splitlines()]
         return [item for item in items if item and item.lower() not in {"none", "هیچ", "موردی نیست", "ندارد"}]
 
+    @staticmethod
+    def _remove_exact(values: list[str], items: list[str]) -> None:
+        for item in items:
+            if item in values:
+                values.remove(item)
+
     def _merge_markers(self, state: DebateState, text: str) -> None:
-        mapping = {
-            "[CONSENSUS]": state.consensus,
-            "[DISAGREEMENTS]": state.disagreements,
-            "[NEW]": state.proposals,
-            "[RISKS]": state.risks,
-            "[RESOLVED]": state.decisions,
-            "[OPEN]": state.open_questions,
-            "[NEXT]": state.discussed_topics,
-        }
-        for marker, target in mapping.items():
-            for item in self._section(text, marker):
-                if item not in target:
-                    target.append(item)
+        consensus = self._section(text, "[CONSENSUS]")
+        disagreements = self._section(text, "[DISAGREEMENTS]")
+        new_items = self._section(text, "[NEW]")
+        risks = self._section(text, "[RISKS]")
+        resolved = self._section(text, "[RESOLVED]")
+        open_items = self._section(text, "[OPEN]")
+        next_items = self._section(text, "[NEXT]")
+
+        for item in consensus:
+            if item not in state.consensus:
+                state.consensus.append(item)
+        for item in disagreements:
+            if item not in state.disagreements:
+                state.disagreements.append(item)
+        for item in new_items:
+            if item not in state.proposals:
+                state.proposals.append(item)
+        for item in risks:
+            if item not in state.risks:
+                state.risks.append(item)
+        for item in resolved:
+            if item not in state.decisions:
+                state.decisions.append(item)
+            self._remove_exact(state.disagreements, [item])
+            self._remove_exact(state.open_questions, [item])
+        for item in open_items:
+            if item not in state.open_questions:
+                state.open_questions.append(item)
+
+        # NEXT is a current-round directive, not historical state.
+        state.next_focus = next_items[:2]
+        state.discussed_topics.extend(item for item in next_items if item not in state.discussed_topics)
