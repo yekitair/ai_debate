@@ -11,9 +11,11 @@ function renderList(id, values){ $(id).innerHTML=(values||[]).map(v=>`<li>${esca
 function renderState(state={}){
   $('segment').textContent=state.segment ?? '—';
   $('round').textContent=state.round ?? '—';
+  $('language-active').textContent=state.language_name || state.language || '—';
   renderList('consensus',state.consensus); renderList('disagreements',state.disagreements);
   renderList('proposals',state.proposals); renderList('risks',state.risks);
   renderList('open_questions',state.open_questions); renderList('decisions',state.decisions);
+  renderList('next_focus',state.next_focus);
   if(state.archived_note_count !== undefined) $('note-status').textContent = `یادداشت‌های آرشیوشده: ${state.archived_note_count}`;
 }
 function addCard(kind,title,meta,text){ const el=document.createElement('article'); el.className=`card ${kind}`; el.innerHTML=`<h3>${escapeHtml(title)}</h3><small>${escapeHtml(meta)}</small><pre>${escapeHtml(text)}</pre>`; $('debate').appendChild(el); el.scrollIntoView({behavior:'smooth',block:'nearest'}); }
@@ -26,6 +28,7 @@ function controls(status){
   $('export').disabled=!(status==='waiting' || status==='stopped' || status==='error');
   $('send-note').disabled=!['starting','running'].includes(status);
   $('question').disabled=running;
+  $('language').disabled=running;
   $('rounds').disabled=running;
   $('max_tokens').disabled=running;
 }
@@ -35,16 +38,18 @@ function handle(event){
   if(e.type==='question'){
     $('debate').innerHTML=''; $('summary').textContent='';
     $('round-total').textContent=e.rounds; $('token-total').textContent=e.max_tokens;
-    log(`موضوع: ${e.question}`);
+    $('language-active').textContent=e.language_name || e.language || '—';
+    log(`موضوع: ${e.question}`); log(`زبان مناظره: ${e.language_name}`);
   }
   if(e.type==='segment_start'){
     setStatus('running'); $('round-total').textContent=e.rounds; $('token-total').textContent=e.max_tokens;
-    renderState({segment:e.segment,round:0}); log(`Segment ${e.segment} شروع شد — ${e.rounds} راند — سقف ${e.max_tokens} توکن`);
+    $('language-active').textContent=e.language_name || e.language || '—';
+    renderState({segment:e.segment,round:0,language_name:e.language_name}); log(`Segment ${e.segment} شروع شد — ${e.rounds} راند — سقف ${e.max_tokens} توکن — زبان: ${e.language_name}`);
   }
   if(e.type==='round_start'){ renderState({segment:e.segment,round:e.round}); log(`Round ${e.round}`); }
   if(e.type==='moderator_mission') addCard('moderator','Moderator — Mission',`Round ${e.round}${e.user_note_consumed?' — یادداشت انسانی خوانده شد و آرشیو شد':''}`,e.text);
   if(e.type==='agent_response') addCard(e.agent==='Agent 1'?'agent1':'agent2',e.agent,`Round ${e.round}${e.truncated?' — پاسخ به سقف توکن رسید':''}`,e.text);
-  if(e.type==='moderator_update'){ addCard('moderator','Moderator — Evaluation',`Round ${e.round}`,e.text); renderState(e.state); }
+  if(e.type==='moderator_update') addCard('moderator','Moderator — Evaluation',`Round ${e.round}`,e.text), renderState(e.state);
   if(e.type==='moderator_summary'){ $('summary').textContent=e.text; }
   if(e.type==='segment_complete'){ setStatus('waiting'); $('summary').textContent=e.summary; renderState(e.state); log(`Segment ${e.segment} کامل شد. Continue یا ذخیره Word.`); }
   if(e.type==='compacted'){ renderState(e.state); setStatus('starting'); log(e.message); }
@@ -55,7 +60,7 @@ function handle(event){
 }
 function connect(){ source=new EventSource('/stream'); source.onmessage=handle; source.onerror=()=>{}; }
 async function post(url,body){ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const data=await r.json(); if(!r.ok) throw new Error(data.error||`HTTP ${r.status}`); return data; }
-$('start').onclick=async()=>{ try{ await post('/api/start',{question:$('question').value,rounds:Number($('rounds').value),max_tokens:Number($('max_tokens').value)}); }catch(e){ setStatus('error'); log(e.message); } };
+$('start').onclick=async()=>{ try{ await post('/api/start',{question:$('question').value,language:$('language').value,rounds:Number($('rounds').value),max_tokens:Number($('max_tokens').value)}); }catch(e){ setStatus('error'); log(e.message); } };
 $('stop').onclick=async()=>{ try{ await post('/api/stop',{}); setStatus('stopping'); }catch(e){log(e.message);} };
 $('continue').onclick=async()=>{ try{ await post('/api/continue',{}); }catch(e){log(e.message);} };
 $('send-note').onclick=async()=>{ try{ await post('/api/note',{note:$('note').value}); }catch(e){log(e.message);} };
@@ -64,6 +69,6 @@ $('export').onclick=()=>{ window.location.href='/api/export/docx'; };
 async function init(){
   connect();
   try{ const r=await fetch('/api/health'); const d=await r.json(); renderHealth(d.models); }catch(e){log('Health check failed: '+e.message);}
-  try{ const r=await fetch('/api/status'); const d=await r.json(); setStatus(d.status); $('rounds').value=d.rounds ?? 10; $('max_tokens').value=d.max_tokens ?? 1200; $('round-total').textContent=d.rounds ?? 10; $('token-total').textContent=d.max_tokens ?? 1200; renderState(d.state); if(d.summary) $('summary').textContent=d.summary; if(d.error) log(d.error); }catch(e){}
+  try{ const r=await fetch('/api/status'); const d=await r.json(); setStatus(d.status); $('rounds').value=d.rounds ?? 10; $('max_tokens').value=d.max_tokens ?? 1200; $('language').value=d.language_mode ?? 'auto'; $('round-total').textContent=d.rounds ?? 10; $('token-total').textContent=d.max_tokens ?? 1200; renderState(d.state); if(d.summary) $('summary').textContent=d.summary; if(d.error) log(d.error); }catch(e){}
 }
 init();
