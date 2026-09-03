@@ -18,6 +18,15 @@
       <textarea id="question" rows="4" placeholder="موضوع یا سؤال مناظره را وارد کنید..."></textarea>
       <div class="settings-grid">
         <div>
+          <label for="language">زبان مناظره</label>
+          <select id="language">
+            {% for code, name in language_options.items() %}
+              <option value="{{ code }}" {% if code == 'auto' %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+          </select>
+          <small>در حالت خودکار، زبان پرسش تشخیص داده می‌شود و همه مدل‌ها ملزم به استفاده از همان زبان خواهند بود.</small>
+        </div>
+        <div>
           <label for="rounds">تعداد راند در هر Segment</label>
           <input id="rounds" type="number" min="1" max="100" value="10">
           <small>هر Segment با همین تعداد راند اجرا می‌شود.</small>
@@ -53,6 +62,7 @@
 
     <section class="panel status-panel">
       <div><strong>وضعیت:</strong> <span id="status">آماده</span></div>
+      <div><strong>زبان:</strong> <span id="language-active">—</span></div>
       <div><strong>Segment:</strong> <span id="segment">—</span></div>
       <div><strong>Round:</strong> <span id="round">—</span> / <span id="round-total">10</span></div>
       <div><strong>توکن:</strong> <span id="token-total">1200</span></div>
@@ -74,6 +84,7 @@
         <div><h3>Risks</h3><ul id="risks"></ul></div>
         <div><h3>Open Questions</h3><ul id="open_questions"></ul></div>
         <div><h3>Decisions</h3><ul id="decisions"></ul></div>
+        <div><h3>Next Focus</h3><ul id="next_focus"></ul></div>
       </div>
     </section>
 
