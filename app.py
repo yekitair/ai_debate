@@ -64,6 +64,14 @@ def state_payload() -> dict[str, object]:
     }
 
 
+def drain_events() -> None:
+    while True:
+        try:
+            SESSION.events.get_nowait()
+        except queue.Empty:
+            return
+
+
 def run_segment_background() -> None:
     engine = build_engine()
     with SESSION.lock:
@@ -132,12 +140,12 @@ def api_start():
         return jsonify({"ok": False, "error": "One or more local LLM servers are unavailable.", "models": health}), 503
 
     with SESSION.lock:
+        drain_events()
         SESSION.state = DebateState(question=question)
         SESSION.status = "starting"
         SESSION.summary = ""
         SESSION.error = ""
         SESSION.stop_event.clear()
-        SESSION.events = queue.Queue()
     emit("health", models=health)
     emit("question", question=question)
     start_thread()
