@@ -10,16 +10,39 @@
   <main class="container">
     <header>
       <h1>AI Debate</h1>
-      <p>مناظره‌ی چندمدلی محلی با Moderator فعال و بخش‌های ۱۰ راندی</p>
+      <p>مناظره‌ی چندمدلی محلی با Moderator فعال</p>
     </header>
 
     <section class="panel">
       <label for="question">موضوع مناظره</label>
-      <textarea id="question" rows="4" placeholder="مثلاً: بهترین معماری برای ساخت یک برنامه ماشین‌حساب چیست؟"></textarea>
+      <textarea id="question" rows="4" placeholder="موضوع یا سؤال مناظره را وارد کنید..."></textarea>
+      <div class="settings-grid">
+        <div>
+          <label for="rounds">تعداد راند در هر Segment</label>
+          <input id="rounds" type="number" min="1" max="100" value="10">
+          <small>هر Segment با همین تعداد راند اجرا می‌شود.</small>
+        </div>
+        <div>
+          <label for="max_tokens">حداکثر توکن خروجی هر پاسخ</label>
+          <input id="max_tokens" type="number" min="128" max="4096" step="64" value="1200">
+          <small>برای جلوگیری از قطع شدن پاسخ‌ها، مقدار بالاتر خروجی کامل‌تری می‌دهد.</small>
+        </div>
+      </div>
       <div class="actions">
         <button id="start">شروع مناظره</button>
         <button id="stop" class="danger" disabled>توقف</button>
         <button id="continue" class="secondary" disabled>ادامه با Context فشرده</button>
+        <button id="export" class="export" disabled>ذخیره نتیجه Word</button>
+      </div>
+    </section>
+
+    <section class="panel note-panel">
+      <h2>یادداشت انسانی برای Moderator</h2>
+      <p>هر زمان در میانه مناظره نکته‌ای دارید، آن را بنویسید. یادداشت در نوبت بعدی Moderator خوانده می‌شود، سپس از صف فعال حذف و در آرشیو نتیجه نگهداری می‌شود.</p>
+      <textarea id="note" rows="3" placeholder="مثلاً: به مسئله مصرف انرژی و هزینه نگهداری هم توجه کنید."></textarea>
+      <div class="actions">
+        <button id="send-note" class="secondary" disabled>ارسال یادداشت به Moderator</button>
+        <span id="note-status" class="note-status"></span>
       </div>
     </section>
 
@@ -31,14 +54,15 @@
     <section class="panel status-panel">
       <div><strong>وضعیت:</strong> <span id="status">آماده</span></div>
       <div><strong>Segment:</strong> <span id="segment">—</span></div>
-      <div><strong>Round:</strong> <span id="round">—</span> / 10</div>
+      <div><strong>Round:</strong> <span id="round">—</span> / <span id="round-total">10</span></div>
+      <div><strong>توکن:</strong> <span id="token-total">1200</span></div>
     </section>
 
     <section id="debate" class="debate"></section>
 
     <section class="panel summary-panel">
       <h2>Master Summary</h2>
-      <pre id="summary">پس از پایان ۱۰ راند، جمع‌بندی Moderator اینجا نمایش داده می‌شود.</pre>
+      <pre id="summary">پس از پایان راندهای Segment، جمع‌بندی Moderator اینجا نمایش داده می‌شود.</pre>
     </section>
 
     <section class="panel state-panel">
