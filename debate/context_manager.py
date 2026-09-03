@@ -18,6 +18,7 @@ def _bounded(values: list[str]) -> list[str]:
 def compact_state(state: DebateState) -> str:
     sections = [
         f"Segment: {state.segment_number}",
+        f"Language: {state.language_name} ({state.language})",
         f"Question: {state.question}",
         f"Durable summary:\n{state.durable_summary or '(none)'}",
     ]
@@ -29,6 +30,7 @@ def compact_state(state: DebateState) -> str:
         ("Proposals", state.proposals),
         ("Risks", state.risks),
         ("Discussed topics", state.discussed_topics),
+        ("Next focus", state.next_focus),
     ):
         items = _bounded(values)
         if items:
@@ -37,9 +39,9 @@ def compact_state(state: DebateState) -> str:
 
 
 def continuation_package(state: DebateState) -> dict[str, str | int]:
-    # Deliberately excludes DebateState.arguments: the next segment gets only durable state.
     return {
         "question": state.question,
         "segment": state.segment_number,
+        "language": state.language,
         "state": compact_state(state),
     }
