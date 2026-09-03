@@ -14,11 +14,14 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class DebateConfig:
-    # A segment is deliberately fixed at 10 rounds by the protocol.
-    rounds_per_segment: int = 10
-    agent_max_tokens: int = 900
-    moderator_max_tokens: int = 650
-    summary_max_tokens: int = 1400
+    default_rounds_per_segment: int = 10
+    default_agent_max_tokens: int = 1200
+    default_moderator_max_tokens: int = 800
+    default_summary_max_tokens: int = 1600
+    min_rounds: int = 1
+    max_rounds: int = 100
+    min_output_tokens: int = 128
+    max_output_tokens: int = 4096
 
 
 MODERATOR = ModelConfig(
@@ -43,7 +46,8 @@ AGENT_2 = ModelConfig(
 )
 
 DEBATE = DebateConfig(
-    agent_max_tokens=int(os.getenv("AGENT_MAX_TOKENS", "900")),
-    moderator_max_tokens=int(os.getenv("MODERATOR_MAX_TOKENS", "650")),
-    summary_max_tokens=int(os.getenv("SUMMARY_MAX_TOKENS", "1400")),
+    default_rounds_per_segment=int(os.getenv("DEFAULT_ROUNDS", "10")),
+    default_agent_max_tokens=int(os.getenv("DEFAULT_AGENT_MAX_TOKENS", "1200")),
+    default_moderator_max_tokens=int(os.getenv("DEFAULT_MODERATOR_MAX_TOKENS", "800")),
+    default_summary_max_tokens=int(os.getenv("DEFAULT_SUMMARY_MAX_TOKENS", "1600")),
 )
